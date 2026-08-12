@@ -7,7 +7,7 @@ import { parseGoogleMapsText } from './services/googleParserService.js';
 let appState = {
   shops: getPreloadedShopsForQuery('karur shops'),
   currentQuery: 'karur shops',
-  rightView: 'spreadsheet', // 'spreadsheet' | 'map' | 'pipeline'
+  rightView: 'spreadsheet', // 'spreadsheet' | 'map' | 'pipeline' | 'flow'
   selectedCategory: 'All',
   minRating: 0,
   openOnly: false,
@@ -16,7 +16,9 @@ let appState = {
   isLoading: false,
   mobilePane: 'list', // 'list' | 'spreadsheet' | 'map'
   mapCenter: [10.9601, 78.0766], // Karur
-  selectedLeadIds: new Set()
+  selectedLeadIds: new Set(),
+  simulatedStepIndex: -1,
+  isSimulating: false
 };
 
 let map = null;
@@ -61,8 +63,9 @@ function initApp() {
         <!-- Workspace Right Mode Switcher -->
         <div class="tab-switch-group">
           <button id="viewSpreadsheetBtn" class="tab-switch-btn active">📊 Live Spreadsheet</button>
-          <button id="viewMapBtn" class="tab-switch-btn">🗺️ Interactive Map</button>
-          <button id="viewPipelineBtn" class="tab-switch-btn">💼 CRM Pipeline (<span id="savedLeadCount">0</span>)</button>
+          <button id="viewMapBtn" class="tab-switch-btn">🗺️ Map</button>
+          <button id="viewPipelineBtn" class="tab-switch-btn">💼 CRM (<span id="savedLeadCount">0</span>)</button>
+          <button id="viewFlowBtn" class="tab-switch-btn" style="background: #fef3c7; color: #92400e; font-weight: 700;">🧠 LangGraph Flow</button>
         </div>
 
         <button id="exportCsvBtn" class="action-btn action-btn-primary">
@@ -161,6 +164,35 @@ function initApp() {
           </div>
         </div>
 
+        <!-- Mode 4: LangGraph Interactive Flow Canvas -->
+        <div id="flowCanvasContainer" class="flow-canvas-container" style="display: none;">
+          <div class="flow-toolbar">
+            <div>
+              <h2>🧠 LangGraph Autonomous AI Agent State Machine</h2>
+              <p>Visual node graph execution, channel routing, and Human-in-the-Loop (HITL) approval engine</p>
+            </div>
+            <button id="runSimulationBtn" class="action-btn action-btn-primary" style="background: #2563eb;">
+              ▶ Run Live AI Lead Simulation
+            </button>
+          </div>
+
+          <div class="flow-interactive-wrapper">
+            <!-- Flow Canvas Visual Grid -->
+            <div class="flow-nodes-grid" id="flowNodesGrid">
+              <!-- Interactive LangGraph Nodes injected here -->
+            </div>
+
+            <!-- State Inspector Sidebar -->
+            <div class="flow-state-inspector" id="flowStateInspector">
+              <h3>🔍 LangGraph State Inspector</h3>
+              <p style="font-size: 0.75rem; color: var(--color-text-muted); margin-bottom: 0.75rem;">
+                Select any node or run simulation to view real-time state mutations.
+              </p>
+              <pre id="stateJsonDisplay" class="state-json-box">Select a node to inspect state...</pre>
+            </div>
+          </div>
+        </div>
+
         <!-- Slide-over Detailed Inspection Panel -->
         <div id="detailSlidePanel" class="detail-slide-panel">
           <div class="detail-header-bar">
@@ -200,6 +232,7 @@ function initApp() {
   setupEventListeners();
   renderShopsList();
   renderSpreadsheetView();
+  renderFlowCanvas();
   updateSavedLeadCountBadge();
 }
 
@@ -281,7 +314,6 @@ function getFilteredShops() {
 async function performGlobalSearch(queryStr) {
   if (!queryStr || queryStr.trim().length === 0) return;
 
-  // Auto-detect raw pasted Google Search text
   if (queryStr.includes('(') && queryStr.includes(')') && (queryStr.includes('Closed') || queryStr.includes('Opens') || queryStr.includes('In-store') || queryStr.includes('Delivery') || queryStr.includes('09') || queryStr.includes('04324'))) {
     const parsedFromInput = parseGoogleMapsText(queryStr, 'Karur, Tamil Nadu');
     if (parsedFromInput && parsedFromInput.length > 0) {
@@ -500,6 +532,119 @@ function renderSpreadsheetView() {
   });
 }
 
+/**
+ * LANGGRAPH INTERACTIVE VISUAL CANVAS
+ */
+const LANGGRAPH_NODES = [
+  { id: 'n1', label: '1. Normalize Lead', type: 'node', desc: 'Trim phone formatting, clean business name & city', stateKey: 'normalized_lead' },
+  { id: 'n2', label: '2. Validate Lead', type: 'node', desc: 'Check phone regex, email syntax, & location bounds', stateKey: 'lead_valid' },
+  { id: 'n3', label: '3. AI Lead Scorer', type: 'node', desc: 'Calculate 0-100 B2B commercial potential score', stateKey: 'score_num' },
+  { id: 'n4', label: '4. Select Channel', type: 'node', desc: 'Route to WhatsApp, Email, or Cold Call script', stateKey: 'selected_channel' },
+  { id: 'n5', label: '5. Prepare Pitch', type: 'agent', desc: 'LLM generates personalized pitch message', stateKey: 'ai_pitch' },
+  { id: 'n6', label: '6. Human Approval (HITL)', type: 'hitl', desc: 'Mukil approves, edits, or skips message before send', stateKey: 'approval_status' },
+  { id: 'n7', label: '7. Send Outreach', type: 'node', desc: 'Launch WhatsApp Web / SendGrid Email API', stateKey: 'outreach_sent' },
+  { id: 'n8', label: '8. Reply Classifier', type: 'agent', desc: 'LLM classifies response intent (Interested/Question)', stateKey: 'reply_intent' },
+  { id: 'n9', label: '9. Requirements & CRM Sync', type: 'node', desc: 'Collect Budget, Scope & save to Hot Prospects', stateKey: 'crm_stage' }
+];
+
+function renderFlowCanvas() {
+  const container = document.getElementById('flowNodesGrid');
+  if (!container) return;
+
+  container.innerHTML = LANGGRAPH_NODES.map((node, idx) => {
+    const isActive = appState.simulatedStepIndex === idx;
+    const isPast = appState.simulatedStepIndex > idx;
+
+    let badgeClass = 'flow-badge-node';
+    if (node.type === 'agent') badgeClass = 'flow-badge-agent';
+    if (node.type === 'hitl') badgeClass = 'flow-badge-hitl';
+
+    return `
+      <div class="flow-node-card ${isActive ? 'active-step' : ''} ${isPast ? 'completed-step' : ''}" data-node-id="${node.id}" data-node-idx="${idx}">
+        <div class="flow-node-header">
+          <span class="flow-node-title">${escapeHtml(node.label)}</span>
+          <span class="${badgeClass}">${node.type.toUpperCase()}</span>
+        </div>
+        <div class="flow-node-desc">${escapeHtml(node.desc)}</div>
+        <div class="flow-status-dot ${isActive ? 'dot-active' : (isPast ? 'dot-complete' : 'dot-idle')}"></div>
+      </div>
+      ${idx < LANGGRAPH_NODES.length - 1 ? `<div class="flow-connector ${isPast ? 'connector-active' : ''}">➔</div>` : ''}
+    `;
+  }).join('');
+
+  container.querySelectorAll('.flow-node-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const idx = parseInt(card.getAttribute('data-node-idx'), 10);
+      inspectNodeState(idx);
+    });
+  });
+}
+
+function inspectNodeState(idx) {
+  const node = LANGGRAPH_NODES[idx];
+  if (!node) return;
+
+  const currentLead = appState.shops[0] || { name: 'Minister White - Karur', category: "Men's Clothes Shop", phone: '+91 9432426133' };
+
+  const mockState = {
+    current_node: node.id,
+    node_name: node.label,
+    node_type: node.type,
+    lead_id: currentLead.id || 'karur-lead-01',
+    business_name: currentLead.name,
+    category: currentLead.category,
+    phone: currentLead.mobile || currentLead.phone,
+    email: currentLead.email,
+    rating: currentLead.rating,
+    phone_valid: true,
+    score_num: currentLead.leadScoreNum || 88,
+    lead_priority: 'HIGH_POTENTIAL',
+    selected_channel: 'WHATSAPP',
+    ai_generated_pitch: `Hello ${currentLead.ownerName || 'Manager'}, reaching out regarding ${currentLead.category} collaboration in Karur...`,
+    human_approval_status: idx >= 5 ? 'APPROVED' : 'PENDING_APPROVAL',
+    reply_intent: idx >= 7 ? 'INTERESTED' : 'AWAITING_REPLY',
+    requirements: idx >= 8 ? { quantity: '500 units', budget: '₹50,000', timeline: '2 weeks' } : {},
+    crm_stage: idx >= 8 ? 'Hot Prospect' : 'New Lead'
+  };
+
+  const jsonDisplay = document.getElementById('stateJsonDisplay');
+  if (jsonDisplay) {
+    jsonDisplay.textContent = JSON.stringify(mockState, null, 2);
+  }
+}
+
+function startFlowSimulation() {
+  if (appState.isSimulating) return;
+  appState.isSimulating = true;
+  appState.simulatedStepIndex = 0;
+
+  const runBtn = document.getElementById('runSimulationBtn');
+  if (runBtn) {
+    runBtn.disabled = true;
+    runBtn.textContent = '⏳ Simulating LangGraph Execution...';
+  }
+
+  renderFlowCanvas();
+  inspectNodeState(0);
+
+  const interval = setInterval(() => {
+    appState.simulatedStepIndex++;
+    if (appState.simulatedStepIndex >= LANGGRAPH_NODES.length) {
+      clearInterval(interval);
+      appState.isSimulating = false;
+      if (runBtn) {
+        runBtn.disabled = false;
+        runBtn.textContent = '▶ Run Live AI Lead Simulation';
+      }
+      showToast('🎉 LangGraph State Machine Execution Completed Successfully!');
+      return;
+    }
+
+    renderFlowCanvas();
+    inspectNodeState(appState.simulatedStepIndex);
+  }, 1000);
+}
+
 window.toggleLeadSelect = function(shopId) {
   if (appState.selectedLeadIds.has(shopId)) {
     appState.selectedLeadIds.delete(shopId);
@@ -575,7 +720,6 @@ function renderDetailPanel(shop) {
     </div>
 
     <div class="detail-content-scroll">
-      <!-- Quick Outreach Action Buttons -->
       <div class="quick-action-bar">
         <a href="tel:${(shop.mobile || shop.phone).replace(/\s+/g, '')}" class="quick-action-btn">
           <span class="icon">📞</span>
@@ -595,7 +739,6 @@ function renderDetailPanel(shop) {
         </button>
       </div>
 
-      <!-- Lead Contact Dossier -->
       <div class="detail-section-box" style="border-left: 4px solid var(--color-primary);">
         <h4>📇 Decision Maker Contact Dossier</h4>
         <div class="info-grid">
@@ -622,7 +765,6 @@ function renderDetailPanel(shop) {
         </div>
       </div>
 
-      <!-- CRM Pipeline Notes & Status Editor -->
       <div class="detail-section-box">
         <h4>💼 Sales Pipeline Status & Notes</h4>
         <div class="form-group">
@@ -644,7 +786,6 @@ function renderDetailPanel(shop) {
         </button>
       </div>
 
-      <!-- Business Profile -->
       <div class="detail-section-box">
         <h4>ℹ️ Company Overview</h4>
         <p style="font-size: 0.86rem; color: var(--color-text-main); line-height: 1.6;">
@@ -814,19 +955,24 @@ function setupEventListeners() {
   const viewSheetBtn = document.getElementById('viewSpreadsheetBtn');
   const viewMapBtn = document.getElementById('viewMapBtn');
   const viewPipelineBtn = document.getElementById('viewPipelineBtn');
+  const viewFlowBtn = document.getElementById('viewFlowBtn');
+
   const spreadsheetContainer = document.getElementById('spreadsheetContainer');
   const mapElement = document.getElementById('map');
   const pipelineContainer = document.getElementById('pipelineContainer');
+  const flowCanvasContainer = document.getElementById('flowCanvasContainer');
 
-  if (viewSheetBtn && viewMapBtn && viewPipelineBtn) {
+  if (viewSheetBtn && viewMapBtn && viewPipelineBtn && viewFlowBtn) {
     viewSheetBtn.addEventListener('click', () => {
       appState.rightView = 'spreadsheet';
       viewSheetBtn.classList.add('active');
       viewMapBtn.classList.remove('active');
       viewPipelineBtn.classList.remove('active');
+      viewFlowBtn.classList.remove('active');
       spreadsheetContainer.style.display = 'flex';
       mapElement.style.display = 'none';
       pipelineContainer.style.display = 'none';
+      flowCanvasContainer.style.display = 'none';
       renderSpreadsheetView();
     });
 
@@ -835,9 +981,11 @@ function setupEventListeners() {
       viewMapBtn.classList.add('active');
       viewSheetBtn.classList.remove('active');
       viewPipelineBtn.classList.remove('active');
+      viewFlowBtn.classList.remove('active');
       mapElement.style.display = 'block';
       spreadsheetContainer.style.display = 'none';
       pipelineContainer.style.display = 'none';
+      flowCanvasContainer.style.display = 'none';
       if (map) {
         setTimeout(() => map.invalidateSize(), 100);
         updateMapMarkers();
@@ -849,11 +997,32 @@ function setupEventListeners() {
       viewPipelineBtn.classList.add('active');
       viewSheetBtn.classList.remove('active');
       viewMapBtn.classList.remove('active');
+      viewFlowBtn.classList.remove('active');
       pipelineContainer.style.display = 'block';
       spreadsheetContainer.style.display = 'none';
       mapElement.style.display = 'none';
+      flowCanvasContainer.style.display = 'none';
       renderPipelineView();
     });
+
+    viewFlowBtn.addEventListener('click', () => {
+      appState.rightView = 'flow';
+      viewFlowBtn.classList.add('active');
+      viewSheetBtn.classList.remove('active');
+      viewMapBtn.classList.remove('active');
+      viewPipelineBtn.classList.remove('active');
+      flowCanvasContainer.style.display = 'flex';
+      spreadsheetContainer.style.display = 'none';
+      mapElement.style.display = 'none';
+      pipelineContainer.style.display = 'none';
+      renderFlowCanvas();
+    });
+  }
+
+  // Simulation Button Listener
+  const runSimBtn = document.getElementById('runSimulationBtn');
+  if (runSimBtn) {
+    runSimBtn.addEventListener('click', startFlowSimulation);
   }
 
   // Mobile View Switching

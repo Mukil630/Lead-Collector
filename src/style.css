@@ -610,7 +610,7 @@ body {
   overflow: hidden;
 }
 
-/* Mode 1: Live Spreadsheet View Pixel-Perfect Alignment */
+/* Mode 1: Live Spreadsheet View */
 .spreadsheet-container {
   width: 100%;
   height: 100%;
@@ -719,6 +719,158 @@ body {
 
 .table-wa-btn:hover {
   background: #bbf7d0;
+}
+
+/* Mode 4: LangGraph Interactive Flow Canvas */
+.flow-canvas-container {
+  width: 100%;
+  height: 100%;
+  background: #0f172a;
+  color: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.flow-toolbar {
+  padding: 0.85rem 1.25rem;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.flow-toolbar h2 {
+  font-family: var(--font-heading);
+  color: #38bdf8;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.flow-toolbar p {
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+.flow-interactive-wrapper {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.flow-nodes-grid {
+  padding: 1.5rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.flow-node-card {
+  width: 100%;
+  max-width: 480px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: var(--radius-md);
+  padding: 0.85rem;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.flow-node-card:hover {
+  border-color: #38bdf8;
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
+}
+
+.flow-node-card.active-step {
+  border: 2px solid #38bdf8;
+  background: #0284c7;
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+}
+
+.flow-node-card.completed-step {
+  border: 1.5px solid #22c55e;
+  background: #14532d;
+}
+
+.flow-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.3rem;
+}
+
+.flow-node-title {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.flow-badge-node { background: #334155; color: #94a3b8; font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 4px; }
+.flow-badge-agent { background: #78350f; color: #fef3c7; font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 4px; }
+.flow-badge-hitl { background: #15803d; color: #dcfce7; font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 4px; font-weight: 700; }
+
+.flow-node-desc {
+  font-size: 0.76rem;
+  color: #cbd5e1;
+}
+
+.flow-status-dot {
+  position: absolute;
+  top: 0.85rem;
+  right: -6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.dot-idle { background: #64748b; }
+.dot-active { background: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
+.dot-complete { background: #22c55e; }
+
+.flow-connector {
+  color: #64748b;
+  font-size: 1.2rem;
+  font-weight: 700;
+  transition: color 0.3s ease;
+}
+
+.flow-connector.connector-active {
+  color: #22c55e;
+}
+
+.flow-state-inspector {
+  background: #0f172a;
+  border-left: 1px solid #334155;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.flow-state-inspector h3 {
+  font-family: var(--font-heading);
+  color: #38bdf8;
+  font-size: 1rem;
+}
+
+.state-json-box {
+  flex: 1;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: var(--radius-sm);
+  padding: 0.85rem;
+  font-family: monospace;
+  font-size: 0.76rem;
+  color: #38bdf8;
+  overflow: auto;
+  white-space: pre-wrap;
 }
 
 /* Modal Styling for Google Import */
