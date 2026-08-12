@@ -62,6 +62,94 @@ export async function checkWhatsAppWithBaileys(phoneStr) {
 }
 
 /**
+ * B2B Service Introduction Pitch Templates & Generator
+ */
+export const OUTREACH_TEMPLATES = [
+  {
+    id: 'tech_web_app',
+    title: '🌐 Web & Mobile App Development',
+    tagline: 'Custom websites, e-commerce & mobile apps for local stores',
+    defaultText: `Hi {owner_name}! 👋 Greetings from {sender_name} at {company_name}.
+
+We specialize in building fast custom websites, mobile applications, and automated lead generation systems for {category} businesses like {shop_name} in {city}.
+
+Our Services:
+• 🌐 Custom Web & E-Commerce Applications
+• 📱 Mobile Apps for Android & iOS
+• 💬 Automated WhatsApp Customer Response Systems
+• 📈 Google Business Profile Ranking & SEO
+
+Would you be open to a quick 2-minute chat about upgrading {shop_name}'s digital presence?`
+  },
+  {
+    id: 'ai_lead_automation',
+    title: '⚡ AI Lead Systems & WhatsApp Automation',
+    tagline: 'Automated lead scraping, CRM & instant WhatsApp response bots',
+    defaultText: `Hi {owner_name}! ⚡ Greetings from {sender_name} at {company_name}.
+
+We help top {category} stores in {city} capture 3x more local customer leads using AI-powered B2B automation tools.
+
+What We Provide for {shop_name}:
+• 📊 Real-time B2B Lead Scraping & Exporting
+• 🤖 WhatsApp AI Sales Assistant (24/7 Automated Customer Replies)
+• 💼 CRM Pipeline & Customer Outreach Management
+
+Would you like a free 5-minute live demo for {shop_name}?`
+  },
+  {
+    id: 'textile_wholesale_sourcing',
+    title: '🧵 Textile & Wholesale Apparel Sourcing',
+    tagline: 'Fabric manufacturing, yarn supply & bulk garment connections',
+    defaultText: `Hi {owner_name}! 🧵 Greetings from {sender_name} at {company_name}.
+
+We provide direct B2B fabric sourcing, yarn supply, and garment manufacturing connections for {category} businesses in {city}.
+
+Our Core Offerings:
+• 👕 Premium Cotton & Home Textile Sourcing
+• 🏭 Factory-Direct Wholesale Pricing (Karur & Tirupur Mills)
+• 📦 Export Quality Fabrics & Custom Weaving Orders
+
+Are you currently looking for new wholesale fabric suppliers or samples for {shop_name}?`
+  },
+  {
+    id: 'custom',
+    title: '✏️ Custom Service Pitch',
+    tagline: 'Write your own custom introduction message with placeholders',
+    defaultText: `Hi {owner_name}, Greetings from {sender_name} ({company_name})! 
+
+We are contacting {shop_name} regarding our B2B services in {city}. 
+
+Please let us know if you would like more details. Thanks!`
+  }
+];
+
+/**
+ * Replace placeholders in template with lead and sender details
+ */
+export function formatPitchTemplate(templateText, lead, senderConfig = {}) {
+  if (!templateText) return '';
+  
+  const ownerName = lead.ownerName ? lead.ownerName.split(' ')[0] : 'Sir/Maam';
+  const shopName = lead.name || 'your business';
+  const category = lead.category || 'business';
+  const addressParts = (lead.address || 'Karur').split(',');
+  const city = addressParts.length > 1 ? addressParts[addressParts.length - 2].trim() : addressParts[0].trim();
+  const phone = lead.mobile || lead.phone || '';
+
+  const senderName = senderConfig.senderName || 'Mukil Arasu';
+  const companyName = senderConfig.companyName || 'Antigravity Tech Solutions';
+
+  return templateText
+    .replace(/\{owner_name\}/g, ownerName)
+    .replace(/\{shop_name\}/g, shopName)
+    .replace(/\{category\}/g, category)
+    .replace(/\{city\}/g, city)
+    .replace(/\{phone\}/g, phone)
+    .replace(/\{sender_name\}/g, senderName)
+    .replace(/\{company_name\}/g, companyName);
+}
+
+/**
  * Simplified WhatsApp pitch template
  */
 export function getSimplePitchTemplate(lead) {
@@ -92,7 +180,7 @@ export async function dispatchOutreachQueueOneByOne(leadList, customTemplate = n
     }
 
     const pitchText = customTemplate 
-      ? customTemplate.replace('{name}', lead.ownerName || lead.name).replace('{business}', lead.name)
+      ? formatPitchTemplate(customTemplate, lead)
       : getSimplePitchTemplate(lead);
 
     results.push({
@@ -181,3 +269,4 @@ export function extractProjectIdeaSpecs(customerMsg, leadContext) {
     status: 'Qualified Project Idea'
   };
 }
+

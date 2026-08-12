@@ -3,12 +3,18 @@ import { shopsData } from './data/shops.js';
 import { searchPlacesLive, getPreloadedShopsForQuery, enrichPlaceData } from './services/placesService.js';
 import { getSavedLeads, saveLead, removeLead, exportLeadsToCSV } from './services/leadExportService.js';
 import { parseGoogleMapsText } from './services/googleParserService.js';
-import { checkWhatsAppWithBaileys, dispatchOutreachQueueOneByOne, handleCustomerReplyAttractionAgent } from './services/baileysOutreachService.js';
+import { 
+  checkWhatsAppWithBaileys, 
+  dispatchOutreachQueueOneByOne, 
+  handleCustomerReplyAttractionAgent,
+  OUTREACH_TEMPLATES,
+  formatPitchTemplate
+} from './services/baileysOutreachService.js';
 
 let appState = {
   shops: getPreloadedShopsForQuery('karur shops'),
   currentQuery: 'karur shops',
-  rightView: 'spreadsheet', // 'spreadsheet' | 'map' | 'pipeline' | 'flow'
+  rightView: 'spreadsheet', // 'spreadsheet' | 'map' | 'pipeline' | 'flow' | 'broadcast'
   selectedCategory: 'All',
   minRating: 0,
   openOnly: false,
@@ -22,7 +28,17 @@ let appState = {
   mapCenter: [10.9601, 78.0766], // Karur
   selectedLeadIds: new Set(),
   simulatedStepIndex: -1,
-  isSimulating: false
+  isSimulating: false,
+
+  // Phase 2 Broadcast Pitch Studio State
+  activePitchTemplateId: 'tech_web_app',
+  customPitchText: OUTREACH_TEMPLATES[0].defaultText,
+  senderConfig: {
+    senderName: 'Mukil Arasu',
+    companyName: 'Antigravity AI & Tech Solutions'
+  },
+  previewLeadIdx: 0,
+  outreachHistory: JSON.parse(localStorage.getItem('lead_collector_outreach_history') || '{}') // shopId -> { timestamp, channel, messageSent, status }
 };
 
 let map = null;
@@ -69,6 +85,7 @@ function initApp() {
           <button id="viewSpreadsheetBtn" class="tab-switch-btn active">📊 Live Spreadsheet</button>
           <button id="viewMapBtn" class="tab-switch-btn">🗺️ Map</button>
           <button id="viewPipelineBtn" class="tab-switch-btn">💼 CRM (<span id="savedLeadCount">0</span>)</button>
+          <button id="viewBroadcastBtn" class="tab-switch-btn" style="background: #f0fdf4; color: #166534; font-weight: 700; border: 1px solid #bbf7d0;">🚀 Broadcast Pitch</button>
           <button id="viewFlowBtn" class="tab-switch-btn" style="background: #fef3c7; color: #92400e; font-weight: 700;">🧠 LangGraph Flow</button>
         </div>
 
@@ -139,7 +156,10 @@ function initApp() {
               <p>Scraped B2B contacts, phone numbers, and decision makers for <strong>${escapeHtml(appState.currentQuery)}</strong></p>
             </div>
             <div style="display: flex; gap: 0.5rem;">
-              <button id="verifyWhatsAppBtn" class="action-btn action-btn-secondary" style="background: #dcfce7; color: #166534; font-weight: 700; border-color: #86efac;">
+              <button id="headerBroadcastBtn" class="action-btn action-btn-secondary" style="background: #dcfce7; color: #166534; font-weight: 700; border-color: #86efac;">
+                🚀 Broadcast Pitch to Leads
+              </button>
+              <button id="verifyWhatsAppBtn" class="action-btn action-btn-secondary" style="background: #e0f2fe; color: #0369a1; font-weight: 700; border-color: #bae6fd;">
                 📱 Verify WhatsApp Status
               </button>
               <button id="sheetExportBtn" class="action-btn action-btn-primary">📥 Download Excel / CSV</button>
@@ -171,7 +191,12 @@ function initApp() {
           </div>
         </div>
 
-        <!-- Mode 4: LangGraph Interactive Flow Canvas -->
+        <!-- Mode 4: Phase 2 Broadcast Pitch Studio Container -->
+        <div id="broadcastStudioContainer" class="broadcast-container" style="display: none;">
+          <!-- Dynamic Broadcast View rendered here -->
+        </div>
+
+        <!-- Mode 5: LangGraph Interactive Flow Canvas -->
         <div id="flowCanvasContainer" class="flow-canvas-container" style="display: none;">
           <div class="flow-toolbar">
             <div>
@@ -507,6 +532,7 @@ function renderSpreadsheetView() {
           const isSaved = savedLeads.some(l => l.id === shop.id);
           const isSelected = shop.id === appState.selectedShopId;
           const waInfo = appState.waVerifiedMap.get(shop.id);
+          const outreachRecord = appState.outreachHistory[shop.id];
 
           return `
             <tr class="${isSelected ? 'active-row' : ''}" data-shop-id="${shop.id}">
@@ -523,8 +549,9 @@ function renderSpreadsheetView() {
                 </a>
               </td>
               <td>
+                ${outreachRecord ? `<span class="table-wa-sent-badge">🟢 Pitch Sent (${outreachRecord.channel})</span>` : ''}
                 ${waInfo ? (waInfo.exists 
-                  ? `<a href="https://wa.me/${shop.whatsapp}" target="_blank" class="table-wa-btn">💬 🟢 WA Active</a>`
+                  ? `<a href="https://wa.me/${shop.whatsapp}" target="_blank" class="table-wa-btn">💬 WA Direct</a>`
                   : `<span class="wa-badge inactive">🔴 Landline / No WA</span>`
                 ) : `<span style="font-size: 0.72rem; color: #94a3b8;">⏳ Checking...</span>`}
               </td>
@@ -556,6 +583,340 @@ function renderSpreadsheetView() {
       selectShop(shopId);
     });
   });
+}
+
+/**
+ * PHASE 2: B2B SERVICE BROADCAST & PITCH STUDIO
+ */
+function renderBroadcastStudioView() {
+  const container = document.getElementById('broadcastStudioContainer');
+  if (!container) return;
+
+  const targetLeads = appState.selectedLeadIds.size > 0 
+    ? appState.shops.filter(s => appState.selectedLeadIds.has(s.id))
+    : getFilteredShops();
+
+  const previewLead = targetLeads[appState.previewLeadIdx] || targetLeads[0] || {
+    id: 'sample',
+    name: 'Karur Textiles & Fabrics',
+    ownerName: 'Ramesh Kumar',
+    category: 'Textile Factory',
+    address: 'Karur, Tamil Nadu',
+    phone: '+91 9894680322'
+  };
+
+  const formattedPitch = formatPitchTemplate(appState.customPitchText, previewLead, appState.senderConfig);
+
+  container.innerHTML = `
+    <div class="broadcast-toolbar">
+      <div>
+        <h2>🚀 Phase 2: Single Message B2B Service Broadcast Studio</h2>
+        <p>Send a customized introduction pitch explaining who you are and what services you provide to <strong>${targetLeads.length} leads</strong>.</p>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span class="brand-badge" style="background: #dcfce7; color: #166534; padding: 0.4rem 0.8rem; font-size: 0.8rem;">
+          🎯 ${targetLeads.length} Leads Targeted
+        </span>
+      </div>
+    </div>
+
+    <div class="broadcast-grid">
+      <!-- Left Column: Template Selection & Sender Profile -->
+      <div class="broadcast-card">
+        <div class="card-section-title">
+          <span>👤 1. Sender Profile & Identity</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div>
+            <label style="font-size: 0.75rem; font-weight: 700; color: var(--color-text-muted);">Your Name / Contact Person</label>
+            <input type="text" id="senderNameInput" class="header-search-input" style="width: 100%; border: 1px solid var(--color-border);" value="${escapeHtml(appState.senderConfig.senderName)}" />
+          </div>
+          <div>
+            <label style="font-size: 0.75rem; font-weight: 700; color: var(--color-text-muted);">Your Company / Agency Name</label>
+            <input type="text" id="senderCompanyInput" class="header-search-input" style="width: 100%; border: 1px solid var(--color-border);" value="${escapeHtml(appState.senderConfig.companyName)}" />
+          </div>
+        </div>
+
+        <div class="card-section-title" style="margin-top: 0.5rem;">
+          <span>📑 2. Select Service Pitch Template</span>
+        </div>
+
+        <div class="template-picker-grid">
+          ${OUTREACH_TEMPLATES.map(tpl => `
+            <button class="template-chip-btn ${appState.activePitchTemplateId === tpl.id ? 'active' : ''}" data-tpl-id="${tpl.id}">
+              <h4>${escapeHtml(tpl.title)}</h4>
+              <p>${escapeHtml(tpl.tagline)}</p>
+            </button>
+          `).join('')}
+        </div>
+
+        <div class="card-section-title" style="margin-top: 0.5rem;">
+          <span>✍️ 3. Customize Pitch Message Copy</span>
+        </div>
+        
+        <textarea id="broadcastPitchTextarea" class="pitch-editor-textarea" placeholder="Type your single introduction message here...">${escapeHtml(appState.customPitchText)}</textarea>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center;">
+          <span style="font-size: 0.72rem; color: var(--color-text-muted); font-weight: 700;">Insert Variables:</span>
+          <button class="pill-btn insert-var-btn" data-var="{owner_name}" style="padding: 0.15rem 0.4rem; font-size: 0.7rem;">+ {owner_name}</button>
+          <button class="pill-btn insert-var-btn" data-var="{shop_name}" style="padding: 0.15rem 0.4rem; font-size: 0.7rem;">+ {shop_name}</button>
+          <button class="pill-btn insert-var-btn" data-var="{category}" style="padding: 0.15rem 0.4rem; font-size: 0.7rem;">+ {category}</button>
+          <button class="pill-btn insert-var-btn" data-var="{city}" style="padding: 0.15rem 0.4rem; font-size: 0.7rem;">+ {city}</button>
+          <button class="pill-btn insert-var-btn" data-var="{sender_name}" style="padding: 0.15rem 0.4rem; font-size: 0.7rem;">+ {sender_name}</button>
+          <button class="pill-btn insert-var-btn" data-var="{company_name}" style="padding: 0.15rem 0.4rem; font-size: 0.7rem;">+ {company_name}</button>
+        </div>
+      </div>
+
+      <!-- Right Column: Live Chat Preview & Batch Dispatch Launcher -->
+      <div class="broadcast-card">
+        <div class="card-section-title">
+          <span>📱 4. Live WhatsApp Message Preview</span>
+          <select id="previewLeadSelect" style="font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--color-border);">
+            ${targetLeads.map((lead, i) => `
+              <option value="${i}" ${i === appState.previewLeadIdx ? 'selected' : ''}>[${i + 1}/${targetLeads.length}] ${escapeHtml(lead.name)}</option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div class="preview-whatsapp-box">
+          <div style="font-size: 0.75rem; font-weight: 700; color: #475569; display: flex; align-items: center; justify-content: space-between;">
+            <span>To: ${escapeHtml(previewLead.ownerName || 'Managing Director')} (${escapeHtml(previewLead.name)})</span>
+            <span>📞 ${escapeHtml(previewLead.mobile || previewLead.phone)}</span>
+          </div>
+
+          <div class="preview-chat-bubble">
+            ${escapeHtml(formattedPitch)}
+            <div class="preview-chat-meta">Just now • WhatsApp Web Direct</div>
+          </div>
+        </div>
+
+        <div class="card-section-title" style="margin-top: 0.5rem;">
+          <span>🚀 5. Multi-Channel Dispatch Actions</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+          <button id="startWaSequenceBtn" class="action-btn action-btn-primary" style="background: linear-gradient(135deg, #16a34a, #15803d); padding: 0.75rem; font-size: 0.9rem; justify-content: center;">
+            💬 Launch 1-Click WhatsApp Sequence (${targetLeads.length} Leads)
+          </button>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+            <button id="openEmailProposalBtn" class="action-btn action-btn-secondary" style="justify-content: center; font-size: 0.8rem;">
+              ✉️ Open Email Proposal
+            </button>
+            <button id="copyPitchScriptBtn" class="action-btn action-btn-secondary" style="justify-content: center; font-size: 0.8rem;">
+              📋 Copy Pitch Text
+            </button>
+          </div>
+        </div>
+
+        <div id="broadcastStatusBox" class="outreach-progress-card" style="display: none;">
+          <div style="display: flex; justify-content: space-between; font-size: 0.8rem; font-weight: 700;">
+            <span id="broadcastProgressText">Dispatching sequence...</span>
+            <span id="broadcastCountText">0 / ${targetLeads.length}</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div id="broadcastProgressBar" class="progress-bar-fill"></div>
+          </div>
+          <div id="broadcastStatusLog" style="font-size: 0.75rem; color: var(--color-text-muted); margin-top: 0.35rem;">
+            Ready to dispatch...
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  bindBroadcastEvents();
+}
+
+function bindBroadcastEvents() {
+  const senderNameInput = document.getElementById('senderNameInput');
+  const senderCompanyInput = document.getElementById('senderCompanyInput');
+  const textarea = document.getElementById('broadcastPitchTextarea');
+
+  if (senderNameInput) {
+    senderNameInput.addEventListener('input', () => {
+      appState.senderConfig.senderName = senderNameInput.value;
+      updateLivePreview();
+    });
+  }
+
+  if (senderCompanyInput) {
+    senderCompanyInput.addEventListener('input', () => {
+      appState.senderConfig.companyName = senderCompanyInput.value;
+      updateLivePreview();
+    });
+  }
+
+  if (textarea) {
+    textarea.addEventListener('input', () => {
+      appState.customPitchText = textarea.value;
+      updateLivePreview();
+    });
+  }
+
+  document.querySelectorAll('.template-chip-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.template-chip-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tplId = btn.getAttribute('data-tpl-id');
+      appState.activePitchTemplateId = tplId;
+      const foundTpl = OUTREACH_TEMPLATES.find(t => t.id === tplId);
+      if (foundTpl) {
+        appState.customPitchText = foundTpl.defaultText;
+        if (textarea) textarea.value = foundTpl.defaultText;
+        updateLivePreview();
+      }
+    });
+  });
+
+  document.querySelectorAll('.insert-var-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const varTag = btn.getAttribute('data-var');
+      if (textarea) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const text = textarea.value;
+        textarea.value = text.substring(0, start) + varTag + text.substring(end);
+        textarea.focus();
+        textarea.selectionStart = textarea.selectionEnd = start + varTag.length;
+        appState.customPitchText = textarea.value;
+        updateLivePreview();
+      }
+    });
+  });
+
+  const leadSelect = document.getElementById('previewLeadSelect');
+  if (leadSelect) {
+    leadSelect.addEventListener('change', () => {
+      appState.previewLeadIdx = parseInt(leadSelect.value, 10);
+      updateLivePreview();
+    });
+  }
+
+  const startWaBtn = document.getElementById('startWaSequenceBtn');
+  if (startWaBtn) {
+    startWaBtn.addEventListener('click', () => {
+      startWhatsAppSequence();
+    });
+  }
+
+  const emailBtn = document.getElementById('openEmailProposalBtn');
+  if (emailBtn) {
+    emailBtn.addEventListener('click', () => {
+      const targetLeads = appState.selectedLeadIds.size > 0 
+        ? appState.shops.filter(s => appState.selectedLeadIds.has(s.id))
+        : getFilteredShops();
+      const currentLead = targetLeads[appState.previewLeadIdx] || targetLeads[0];
+      if (!currentLead) return;
+
+      const pitchText = formatPitchTemplate(appState.customPitchText, currentLead, appState.senderConfig);
+      const subject = encodeURIComponent(`B2B Partnership Proposal for ${currentLead.name}`);
+      const body = encodeURIComponent(pitchText);
+
+      window.open(`mailto:${currentLead.email}?subject=${subject}&body=${body}`, '_blank');
+
+      appState.outreachHistory[currentLead.id] = {
+        timestamp: new Date().toISOString(),
+        channel: 'EMAIL',
+        messageSent: pitchText,
+        status: 'SENT'
+      };
+      localStorage.setItem('lead_collector_outreach_history', JSON.stringify(appState.outreachHistory));
+      showToast(`Opened email proposal for ${currentLead.name}!`);
+      renderSpreadsheetView();
+    });
+  }
+
+  const copyBtn = document.getElementById('copyPitchScriptBtn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      const targetLeads = appState.selectedLeadIds.size > 0 
+        ? appState.shops.filter(s => appState.selectedLeadIds.has(s.id))
+        : getFilteredShops();
+      const currentLead = targetLeads[appState.previewLeadIdx] || targetLeads[0];
+      if (!currentLead) return;
+
+      const pitchText = formatPitchTemplate(appState.customPitchText, currentLead, appState.senderConfig);
+      navigator.clipboard.writeText(pitchText).then(() => {
+        showToast('Copied pitch text to clipboard!');
+      });
+    });
+  }
+}
+
+function updateLivePreview() {
+  const targetLeads = appState.selectedLeadIds.size > 0 
+    ? appState.shops.filter(s => appState.selectedLeadIds.has(s.id))
+    : getFilteredShops();
+
+  const previewLead = targetLeads[appState.previewLeadIdx] || targetLeads[0] || {
+    id: 'sample',
+    name: 'Karur Textiles & Fabrics',
+    ownerName: 'Ramesh Kumar',
+    category: 'Textile Factory',
+    address: 'Karur, Tamil Nadu',
+    phone: '+91 9894680322'
+  };
+
+  const formattedPitch = formatPitchTemplate(appState.customPitchText, previewLead, appState.senderConfig);
+  const bubble = document.querySelector('.preview-chat-bubble');
+  if (bubble) {
+    bubble.innerHTML = `${escapeHtml(formattedPitch)}<div class="preview-chat-meta">Just now • WhatsApp Web Direct</div>`;
+  }
+}
+
+async function startWhatsAppSequence() {
+  const targetLeads = appState.selectedLeadIds.size > 0 
+    ? appState.shops.filter(s => appState.selectedLeadIds.has(s.id))
+    : getFilteredShops();
+
+  if (targetLeads.length === 0) {
+    showToast('No leads available to launch WhatsApp sequence.');
+    return;
+  }
+
+  const statusBox = document.getElementById('broadcastStatusBox');
+  const progressText = document.getElementById('broadcastProgressText');
+  const countText = document.getElementById('broadcastCountText');
+  const progressBar = document.getElementById('broadcastProgressBar');
+  const statusLog = document.getElementById('broadcastStatusLog');
+
+  if (statusBox) statusBox.style.display = 'block';
+
+  let sentCount = 0;
+
+  for (let i = 0; i < targetLeads.length; i++) {
+    const lead = targetLeads[i];
+    const pitchText = formatPitchTemplate(appState.customPitchText, lead, appState.senderConfig);
+
+    const waPhone = lead.whatsapp || (lead.mobile || lead.phone).replace(/[^0-9]/g, '');
+
+    if (progressText) progressText.textContent = `Opening WhatsApp for ${lead.name}...`;
+    if (countText) countText.textContent = `${i + 1} / ${targetLeads.length}`;
+    if (progressBar) progressBar.style.width = `${Math.round(((i + 1) / targetLeads.length) * 100)}%`;
+    if (statusLog) statusLog.textContent = `Launching window for ${lead.name} (${waPhone})...`;
+
+    const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(pitchText)}`;
+    window.open(waUrl, '_blank');
+
+    appState.outreachHistory[lead.id] = {
+      timestamp: new Date().toISOString(),
+      channel: 'WHATSAPP',
+      messageSent: pitchText,
+      status: 'SENT'
+    };
+    sentCount++;
+
+    if (i < targetLeads.length - 1) {
+      await new Promise(res => setTimeout(res, 1200));
+    }
+  }
+
+  localStorage.setItem('lead_collector_outreach_history', JSON.stringify(appState.outreachHistory));
+  if (progressText) progressText.textContent = '🎉 WhatsApp Sequence Completed!';
+  if (statusLog) statusLog.textContent = `Successfully launched ${sentCount} WhatsApp pitch windows!`;
+  showToast(`Launched ${sentCount} WhatsApp pitch messages!`);
+  renderSpreadsheetView();
 }
 
 /**
@@ -1023,37 +1384,44 @@ function setupEventListeners() {
   const viewSheetBtn = document.getElementById('viewSpreadsheetBtn');
   const viewMapBtn = document.getElementById('viewMapBtn');
   const viewPipelineBtn = document.getElementById('viewPipelineBtn');
+  const viewBroadcastBtn = document.getElementById('viewBroadcastBtn');
+  const headerBroadcastBtn = document.getElementById('headerBroadcastBtn');
   const viewFlowBtn = document.getElementById('viewFlowBtn');
 
   const spreadsheetContainer = document.getElementById('spreadsheetContainer');
   const mapElement = document.getElementById('map');
   const pipelineContainer = document.getElementById('pipelineContainer');
+  const broadcastStudioContainer = document.getElementById('broadcastStudioContainer');
   const flowCanvasContainer = document.getElementById('flowCanvasContainer');
+
+  const resetActiveTabs = () => {
+    if (viewSheetBtn) viewSheetBtn.classList.remove('active');
+    if (viewMapBtn) viewMapBtn.classList.remove('active');
+    if (viewPipelineBtn) viewPipelineBtn.classList.remove('active');
+    if (viewBroadcastBtn) viewBroadcastBtn.classList.remove('active');
+    if (viewFlowBtn) viewFlowBtn.classList.remove('active');
+
+    if (spreadsheetContainer) spreadsheetContainer.style.display = 'none';
+    if (mapElement) mapElement.style.display = 'none';
+    if (pipelineContainer) pipelineContainer.style.display = 'none';
+    if (broadcastStudioContainer) broadcastStudioContainer.style.display = 'none';
+    if (flowCanvasContainer) flowCanvasContainer.style.display = 'none';
+  };
 
   if (viewSheetBtn && viewMapBtn && viewPipelineBtn && viewFlowBtn) {
     viewSheetBtn.addEventListener('click', () => {
       appState.rightView = 'spreadsheet';
+      resetActiveTabs();
       viewSheetBtn.classList.add('active');
-      viewMapBtn.classList.remove('active');
-      viewPipelineBtn.classList.remove('active');
-      viewFlowBtn.classList.remove('active');
       spreadsheetContainer.style.display = 'flex';
-      mapElement.style.display = 'none';
-      pipelineContainer.style.display = 'none';
-      flowCanvasContainer.style.display = 'none';
       renderSpreadsheetView();
     });
 
     viewMapBtn.addEventListener('click', () => {
       appState.rightView = 'map';
+      resetActiveTabs();
       viewMapBtn.classList.add('active');
-      viewSheetBtn.classList.remove('active');
-      viewPipelineBtn.classList.remove('active');
-      viewFlowBtn.classList.remove('active');
       mapElement.style.display = 'block';
-      spreadsheetContainer.style.display = 'none';
-      pipelineContainer.style.display = 'none';
-      flowCanvasContainer.style.display = 'none';
       if (map) {
         setTimeout(() => map.invalidateSize(), 100);
         updateMapMarkers();
@@ -1062,27 +1430,33 @@ function setupEventListeners() {
 
     viewPipelineBtn.addEventListener('click', () => {
       appState.rightView = 'pipeline';
+      resetActiveTabs();
       viewPipelineBtn.classList.add('active');
-      viewSheetBtn.classList.remove('active');
-      viewMapBtn.classList.remove('active');
-      viewFlowBtn.classList.remove('active');
       pipelineContainer.style.display = 'block';
-      spreadsheetContainer.style.display = 'none';
-      mapElement.style.display = 'none';
-      flowCanvasContainer.style.display = 'none';
       renderPipelineView();
     });
 
+    if (viewBroadcastBtn) {
+      viewBroadcastBtn.addEventListener('click', () => {
+        appState.rightView = 'broadcast';
+        resetActiveTabs();
+        viewBroadcastBtn.classList.add('active');
+        broadcastStudioContainer.style.display = 'flex';
+        renderBroadcastStudioView();
+      });
+    }
+
+    if (headerBroadcastBtn) {
+      headerBroadcastBtn.addEventListener('click', () => {
+        if (viewBroadcastBtn) viewBroadcastBtn.click();
+      });
+    }
+
     viewFlowBtn.addEventListener('click', () => {
       appState.rightView = 'flow';
+      resetActiveTabs();
       viewFlowBtn.classList.add('active');
-      viewSheetBtn.classList.remove('active');
-      viewMapBtn.classList.remove('active');
-      viewPipelineBtn.classList.remove('active');
       flowCanvasContainer.style.display = 'flex';
-      spreadsheetContainer.style.display = 'none';
-      mapElement.style.display = 'none';
-      pipelineContainer.style.display = 'none';
       renderFlowCanvas();
     });
   }
