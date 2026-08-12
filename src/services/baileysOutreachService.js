@@ -1,40 +1,68 @@
 /**
  * Baileys Safe WhatsApp Checker & Server Queue Dispatcher
- * Configured with 1-2 min safe dispatch delays & 15-20s humanized chatbot delays
+ * Formats Indian mobile numbers to international 919xxxxxxxx format
  */
 
-// Safe Time Delays
-export const QUEUE_DISPATCH_DELAY_MIN_MS = 60000;  // 1 minute (60 seconds)
-export const QUEUE_DISPATCH_DELAY_MAX_MS = 120000; // 2 minutes (120 seconds)
+export const QUEUE_DISPATCH_DELAY_MIN_MS = 60000;
+export const QUEUE_DISPATCH_DELAY_MAX_MS = 120000;
 
-export const CHATBOT_REPLY_DELAY_MIN_MS = 15000;   // 15 seconds
-export const CHATBOT_REPLY_DELAY_MAX_MS = 20000;   // 20 seconds
+export const CHATBOT_REPLY_DELAY_MIN_MS = 15000;
+export const CHATBOT_REPLY_DELAY_MAX_MS = 20000;
 
 function getRandomDelay(minMs, maxMs) {
   return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
 }
 
 /**
+ * Format raw Indian phone number to clean 91XXXXXXXXXX WhatsApp format
+ */
+export function formatWhatsAppNumber(phoneStr) {
+  if (!phoneStr) return null;
+  const digits = phoneStr.replace(/[^0-9]/g, '');
+  
+  // Landlines starting with 04324, 0431, 044, 0422
+  if (digits.startsWith('04') || digits.startsWith('9104')) {
+    return null; // Landline
+  }
+
+  // Mobile starting with 09... or 08... or 07... or 06...
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return '91' + digits.slice(1);
+  }
+
+  // Mobile starting with 9..., 8..., 7..., 6... (10 digits)
+  if (digits.length === 10 && ['9', '8', '7', '6'].includes(digits[0])) {
+    return '91' + digits;
+  }
+
+  // Already 91XXXXXXXXXX (12 digits)
+  if (digits.length === 12 && digits.startsWith('91') && ['9', '8', '7', '6'].includes(digits[2])) {
+    return digits;
+  }
+
+  return null;
+}
+
+/**
  * Check if number has active WhatsApp (Baileys onWhatsApp protocol)
  */
 export async function checkWhatsAppWithBaileys(phoneStr) {
-  const cleanDigits = phoneStr.replace(/[^0-9]/g, '');
+  const formattedWa = formatWhatsAppNumber(phoneStr);
   
-  if (cleanDigits.startsWith('04') || cleanDigits.startsWith('9104')) {
-    return { exists: false, jid: null, reason: 'Landline number' };
+  if (!formattedWa) {
+    return { exists: false, jid: null, formattedPhone: null, reason: 'Landline or invalid mobile' };
   }
 
-  const isMobile = cleanDigits.length >= 10 && ['9', '8', '7', '6'].includes(cleanDigits.slice(-10)[0]);
-  
   return {
-    exists: isMobile,
-    jid: isMobile ? `${cleanDigits}@s.whatsapp.net` : null,
-    reason: isMobile ? 'Active WhatsApp' : 'No WhatsApp'
+    exists: true,
+    jid: `${formattedWa}@s.whatsapp.net`,
+    formattedPhone: formattedWa,
+    reason: 'Active WhatsApp Account'
   };
 }
 
 /**
- * Simplified, friendly WhatsApp pitch template (Short & Easy)
+ * Simplified WhatsApp pitch template
  */
 export function getSimplePitchTemplate(lead) {
   const name = lead.ownerName ? lead.ownerName.split(' ')[0] : 'Sir/Maam';
@@ -42,15 +70,13 @@ export function getSimplePitchTemplate(lead) {
 }
 
 /**
- * Server Queue Dispatcher - Sends one by one with 1 to 2 minute safe delays
+ * Server Queue Dispatcher
  */
 export async function dispatchOutreachQueueOneByOne(leadList, customTemplate = null, onProgressCallback = null, isSimulation = false) {
   const results = [];
 
   for (let i = 0; i < leadList.length; i++) {
     const lead = leadList[i];
-    
-    // Step 1: Safe WhatsApp Check
     const check = await checkWhatsAppWithBaileys(lead.mobile || lead.phone);
     
     if (!check.exists) {
@@ -65,12 +91,10 @@ export async function dispatchOutreachQueueOneByOne(leadList, customTemplate = n
       continue;
     }
 
-    // Step 2: Super Simple Pitch Content
     const pitchText = customTemplate 
       ? customTemplate.replace('{name}', lead.ownerName || lead.name).replace('{business}', lead.name)
       : getSimplePitchTemplate(lead);
 
-    // Step 3: Dispatch Message
     results.push({
       leadId: lead.id,
       name: lead.name,
@@ -81,7 +105,6 @@ export async function dispatchOutreachQueueOneByOne(leadList, customTemplate = n
       timestamp: new Date().toISOString()
     });
 
-    // Step 4: 1 to 2 Minute Safe Delay for next person (or 500ms if fast visual simulation)
     const delayMs = isSimulation ? 600 : getRandomDelay(QUEUE_DISPATCH_DELAY_MIN_MS, QUEUE_DISPATCH_DELAY_MAX_MS);
     const delaySec = Math.round(delayMs / 1000);
 
@@ -98,18 +121,15 @@ export async function dispatchOutreachQueueOneByOne(leadList, customTemplate = n
 }
 
 /**
- * AI Sales Attraction Chatbot Agent (15-20 second human typing delay & simple responses)
+ * AI Sales Attraction Chatbot Agent
  */
 export async function handleCustomerReplyAttractionAgent(customerMsg, leadContext, isSimulation = false) {
-  // 15 to 20 second human typing delay
   const typingDelayMs = isSimulation ? 800 : getRandomDelay(CHATBOT_REPLY_DELAY_MIN_MS, CHATBOT_REPLY_DELAY_MAX_MS);
   await new Promise(res => setTimeout(res, typingDelayMs));
 
   const msgLower = customerMsg.toLowerCase();
   
-  // Project / Service Interest
   if (msgLower.includes('website') || msgLower.includes('app') || msgLower.includes('cost') || msgLower.includes('price') || msgLower.includes('need') || msgLower.includes('build') || msgLower.includes('project')) {
-    
     const projectSpecs = extractProjectIdeaSpecs(customerMsg, leadContext);
     
     return {
@@ -138,7 +158,7 @@ export async function handleCustomerReplyAttractionAgent(customerMsg, leadContex
 }
 
 /**
- * Lead AI Agent - Separates Project Ideas into Clean Dossiers
+ * Lead AI Agent - Project Specs Extractor
  */
 export function extractProjectIdeaSpecs(customerMsg, leadContext) {
   const msgLower = customerMsg.toLowerCase();
