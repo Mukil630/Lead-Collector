@@ -718,11 +718,12 @@ function getPhotoForCategory(categoryStr, idStr) {
   return photos[hash % photos.length];
 }
 
-export function getPreloadedShopsForQuery(queryStr) {
+export function getPreloadedShopsForQuery(queryStr, targetCount = 100) {
   const qLower = (queryStr || '').toLowerCase();
+  let baseLeads = [];
 
   if (qLower.includes('karur') && (qLower.includes('shop') || qLower.includes('store') || qLower.includes('bazaar'))) {
-    return PRELOADED_CITY_HUBS.karurShops.map(h => enrichPlaceData({
+    baseLeads = PRELOADED_CITY_HUBS.karurShops.map(h => enrichPlaceData({
       place_id: 'karur-shop-' + hashString(h.name),
       display_name: `${h.name}, ${h.category}, ${h.address}`,
       lat: h.lat,
@@ -732,10 +733,8 @@ export function getPreloadedShopsForQuery(queryStr) {
       website: h.website,
       type: h.category
     }, h));
-  }
-
-  if (qLower.includes('puliyur')) {
-    return PRELOADED_CITY_HUBS.puliyur.map(h => enrichPlaceData({
+  } else if (qLower.includes('puliyur')) {
+    baseLeads = PRELOADED_CITY_HUBS.puliyur.map(h => enrichPlaceData({
       place_id: 'puliyur-' + hashString(h.name),
       display_name: `${h.name}, ${h.category}, ${h.address}`,
       lat: h.lat,
@@ -745,10 +744,8 @@ export function getPreloadedShopsForQuery(queryStr) {
       website: h.website,
       type: h.category
     }, h));
-  }
-  
-  if (qLower.includes('trichy') && (qLower.includes('hotel') || qLower.includes('stay') || qLower.includes('food'))) {
-    return PRELOADED_CITY_HUBS.trichy.map(h => enrichPlaceData({
+  } else if (qLower.includes('trichy') && (qLower.includes('hotel') || qLower.includes('stay') || qLower.includes('food'))) {
+    baseLeads = PRELOADED_CITY_HUBS.trichy.map(h => enrichPlaceData({
       place_id: 'trichy-' + hashString(h.name),
       display_name: `${h.name}, ${h.category}, ${h.address}`,
       lat: h.lat,
@@ -758,10 +755,8 @@ export function getPreloadedShopsForQuery(queryStr) {
       website: h.website,
       type: h.category
     }, h));
-  }
-  
-  if (qLower.includes('karur') && (qLower.includes('textile') || qLower.includes('fabric') || qLower.includes('loom') || qLower.includes('mill'))) {
-    return karurShops.map(s => enrichPlaceData({
+  } else if (qLower.includes('karur') && (qLower.includes('textile') || qLower.includes('fabric') || qLower.includes('loom') || qLower.includes('mill'))) {
+    baseLeads = karurShops.map(s => enrichPlaceData({
       place_id: s.id,
       display_name: `${s.name}, ${s.category}, ${s.address}`,
       lat: s.lat,
@@ -769,7 +764,13 @@ export function getPreloadedShopsForQuery(queryStr) {
     }, s));
   }
 
-  return [];
+  if (targetCount > baseLeads.length) {
+    const extraNeeded = targetCount - baseLeads.length;
+    const dynamicExtra = generateDynamicCityLeads(queryStr || 'Karur', 'Shop', extraNeeded);
+    return [...baseLeads, ...dynamicExtra];
+  }
+
+  return baseLeads.slice(0, targetCount);
 }
 
 /**
