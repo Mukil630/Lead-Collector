@@ -3,6 +3,7 @@ import { shopsData } from './data/shops.js';
 import { searchPlacesLive, getPreloadedShopsForQuery, enrichPlaceData } from './services/placesService.js';
 import { getSavedLeads, saveLead, removeLead, exportLeadsToCSV } from './services/leadExportService.js';
 import { parseGoogleMapsText } from './services/googleParserService.js';
+import { checkWhatsAppWithBaileys, dispatchOutreachQueueOneByOne, handleCustomerReplyAttractionAgent } from './services/baileysOutreachService.js';
 
 let appState = {
   shops: getPreloadedShopsForQuery('karur shops'),
@@ -11,9 +12,12 @@ let appState = {
   selectedCategory: 'All',
   minRating: 0,
   openOnly: false,
+  waOnlyFilter: false,
   selectedShopId: null,
   isPanelOpen: false,
   isLoading: false,
+  isCheckingWhatsApp: false,
+  waVerifiedMap: new Map(), // shopId -> { exists: boolean, jid: string }
   mobilePane: 'list', // 'list' | 'spreadsheet' | 'map'
   mapCenter: [10.9601, 78.0766], // Karur
   selectedLeadIds: new Set(),
@@ -97,11 +101,11 @@ function initApp() {
           </div>
 
           <div class="sub-filters">
+            <div id="waOnlyFilterChip" class="toggle-chip">
+              💬 WhatsApp Active Only
+            </div>
             <div id="ratingFilterChip" class="toggle-chip">
               ⭐ 4.5+ Rating
-            </div>
-            <div id="openFilterChip" class="toggle-chip">
-              🟢 Open Now
             </div>
             <div id="selectAllLeadsChip" class="toggle-chip">
               ☑️ Select All (<span id="selectedCountText">0</span>)
@@ -135,6 +139,9 @@ function initApp() {
               <p>Scraped B2B contacts, phone numbers, and decision makers for <strong>${escapeHtml(appState.currentQuery)}</strong></p>
             </div>
             <div style="display: flex; gap: 0.5rem;">
+              <button id="verifyWhatsAppBtn" class="action-btn action-btn-secondary" style="background: #dcfce7; color: #166534; font-weight: 700; border-color: #86efac;">
+                📱 Verify WhatsApp Status
+              </button>
               <button id="sheetExportBtn" class="action-btn action-btn-primary">📥 Download Excel / CSV</button>
             </div>
           </div>
@@ -177,12 +184,7 @@ function initApp() {
           </div>
 
           <div class="flow-interactive-wrapper">
-            <!-- Flow Canvas Visual Grid -->
-            <div class="flow-nodes-grid" id="flowNodesGrid">
-              <!-- Interactive LangGraph Nodes injected here -->
-            </div>
-
-            <!-- State Inspector Sidebar -->
+            <div class="flow-nodes-grid" id="flowNodesGrid"></div>
             <div class="flow-state-inspector" id="flowStateInspector">
               <h3>🔍 LangGraph State Inspector</h3>
               <p style="font-size: 0.75rem; color: var(--color-text-muted); margin-bottom: 0.75rem;">
@@ -198,10 +200,7 @@ function initApp() {
           <div class="detail-header-bar">
             <button id="closePanelBtn" class="close-panel-btn" title="Close Panel">✕</button>
           </div>
-
-          <div id="detailPanelContent" style="display: flex; flex-direction: column; height: 100%;">
-            <!-- Dynamic Shop Details populated here -->
-          </div>
+          <div id="detailPanelContent" style="display: flex; flex-direction: column; height: 100%;"></div>
         </div>
       </section>
     </main>
@@ -307,6 +306,10 @@ function getFilteredShops() {
   return appState.shops.filter(shop => {
     if (appState.minRating > 0 && shop.rating < appState.minRating) return false;
     if (appState.openOnly && !shop.isOpen) return false;
+    if (appState.waOnlyFilter) {
+      const waInfo = appState.waVerifiedMap.get(shop.id);
+      if (!waInfo || !waInfo.exists) return false;
+    }
     return true;
   });
 }
@@ -359,7 +362,24 @@ async function performGlobalSearch(queryStr) {
     if (loadingBar) loadingBar.style.display = 'none';
     renderShopsList();
     renderSpreadsheetView();
+    // Auto-verify WhatsApp numbers for top shops
+    verifyWhatsAppNumbersForShops();
   }
+}
+
+async function verifyWhatsAppNumbersForShops() {
+  if (appState.isCheckingWhatsApp) return;
+  appState.isCheckingWhatsApp = true;
+
+  for (const shop of appState.shops) {
+    const phone = shop.mobile || shop.phone;
+    const res = await checkWhatsAppWithBaileys(phone);
+    appState.waVerifiedMap.set(shop.id, res);
+  }
+
+  appState.isCheckingWhatsApp = false;
+  renderShopsList();
+  renderSpreadsheetView();
 }
 
 function renderShopsList() {
@@ -388,6 +408,7 @@ function renderShopsList() {
     const isSelected = shop.id === appState.selectedShopId;
     const isChecked = appState.selectedLeadIds.has(shop.id);
     const isSaved = savedLeads.some(l => l.id === shop.id);
+    const waInfo = appState.waVerifiedMap.get(shop.id);
 
     return `
       <div class="shop-card ${isSelected ? 'selected' : ''}" data-shop-id="${shop.id}">
@@ -410,7 +431,10 @@ function renderShopsList() {
 
           <div class="contact-highlight-box">
             <div>👤 <strong>Contact:</strong> ${escapeHtml(shop.ownerName || 'Manager')}</div>
-            <div>📞 <strong>Phone:</strong> ${escapeHtml(shop.mobile || shop.phone)}</div>
+            <div>
+              📞 <strong>Phone:</strong> ${escapeHtml(shop.mobile || shop.phone)}
+              ${waInfo ? (waInfo.exists ? `<span class="wa-badge active" title="WhatsApp Active"> 🟢 WA Active</span>` : `<span class="wa-badge inactive" title="Landline / No WhatsApp"> 🔴 Landline</span>`) : ''}
+            </div>
             <div>✉️ <strong>Email:</strong> ${escapeHtml(shop.email)}</div>
           </div>
 
@@ -470,7 +494,7 @@ function renderSpreadsheetView() {
           <th>Category</th>
           <th>Contact Person</th>
           <th>Direct Phone / Mobile</th>
-          <th>WhatsApp Outreach</th>
+          <th>WhatsApp Status</th>
           <th>Official Email</th>
           <th>Address</th>
           <th>Rating</th>
@@ -482,6 +506,7 @@ function renderSpreadsheetView() {
         ${filteredShops.map((shop, idx) => {
           const isSaved = savedLeads.some(l => l.id === shop.id);
           const isSelected = shop.id === appState.selectedShopId;
+          const waInfo = appState.waVerifiedMap.get(shop.id);
 
           return `
             <tr class="${isSelected ? 'active-row' : ''}" data-shop-id="${shop.id}">
@@ -498,9 +523,10 @@ function renderSpreadsheetView() {
                 </a>
               </td>
               <td>
-                <a href="https://wa.me/${shop.whatsapp}?text=Hello%20${encodeURIComponent(shop.ownerName || shop.name)},%20reaching%20out%20regarding%20${encodeURIComponent(shop.category)}%20collaboration." target="_blank" class="table-wa-btn">
-                  💬 WhatsApp
-                </a>
+                ${waInfo ? (waInfo.exists 
+                  ? `<a href="https://wa.me/${shop.whatsapp}" target="_blank" class="table-wa-btn">💬 🟢 WA Active</a>`
+                  : `<span class="wa-badge inactive">🔴 Landline / No WA</span>`
+                ) : `<span style="font-size: 0.72rem; color: #94a3b8;">⏳ Checking...</span>`}
               </td>
               <td><a href="mailto:${shop.email}" style="color: var(--color-text-muted); font-size: 0.8rem;">${escapeHtml(shop.email)}</a></td>
               <td style="max-width: 220px; font-size: 0.78rem; color: var(--color-text-muted);" title="${escapeHtml(shop.address)}">
@@ -537,14 +563,14 @@ function renderSpreadsheetView() {
  */
 const LANGGRAPH_NODES = [
   { id: 'n1', label: '1. Normalize Lead', type: 'node', desc: 'Trim phone formatting, clean business name & city', stateKey: 'normalized_lead' },
-  { id: 'n2', label: '2. Validate Lead', type: 'node', desc: 'Check phone regex, email syntax, & location bounds', stateKey: 'lead_valid' },
+  { id: 'n2', label: '2. Validate WhatsApp Status', type: 'node', desc: 'Run Baileys onWhatsApp socket lookup (0 messages sent)', stateKey: 'wa_verified' },
   { id: 'n3', label: '3. AI Lead Scorer', type: 'node', desc: 'Calculate 0-100 B2B commercial potential score', stateKey: 'score_num' },
   { id: 'n4', label: '4. Select Channel', type: 'node', desc: 'Route to WhatsApp, Email, or Cold Call script', stateKey: 'selected_channel' },
   { id: 'n5', label: '5. Prepare Pitch', type: 'agent', desc: 'LLM generates personalized pitch message', stateKey: 'ai_pitch' },
   { id: 'n6', label: '6. Human Approval (HITL)', type: 'hitl', desc: 'Mukil approves, edits, or skips message before send', stateKey: 'approval_status' },
-  { id: 'n7', label: '7. Send Outreach', type: 'node', desc: 'Launch WhatsApp Web / SendGrid Email API', stateKey: 'outreach_sent' },
-  { id: 'n8', label: '8. Reply Classifier', type: 'agent', desc: 'LLM classifies response intent (Interested/Question)', stateKey: 'reply_intent' },
-  { id: 'n9', label: '9. Requirements & CRM Sync', type: 'node', desc: 'Collect Budget, Scope & save to Hot Prospects', stateKey: 'crm_stage' }
+  { id: 'n7', label: '7. Send Outreach Queue', type: 'node', desc: 'Safe 1-by-1 queue dispatch with 1-2 min delays', stateKey: 'outreach_sent' },
+  { id: 'n8', label: '8. AI Attraction Chatbot', type: 'agent', desc: 'Humanized 15-20s typing delay attraction bot', stateKey: 'reply_intent' },
+  { id: 'n9', label: '9. Lead AI Project Extractor', type: 'agent', desc: 'Extracts Project Scope, Budget & saves to CRM', stateKey: 'crm_stage' }
 ];
 
 function renderFlowCanvas() {
@@ -585,6 +611,7 @@ function inspectNodeState(idx) {
   if (!node) return;
 
   const currentLead = appState.shops[0] || { name: 'Minister White - Karur', category: "Men's Clothes Shop", phone: '+91 9432426133' };
+  const waInfo = appState.waVerifiedMap.get(currentLead.id) || { exists: true, jid: '919432426133@s.whatsapp.net' };
 
   const mockState = {
     current_node: node.id,
@@ -594,16 +621,25 @@ function inspectNodeState(idx) {
     business_name: currentLead.name,
     category: currentLead.category,
     phone: currentLead.mobile || currentLead.phone,
+    whatsapp_exists: waInfo.exists,
+    whatsapp_jid: waInfo.jid,
     email: currentLead.email,
     rating: currentLead.rating,
-    phone_valid: true,
     score_num: currentLead.leadScoreNum || 88,
     lead_priority: 'HIGH_POTENTIAL',
-    selected_channel: 'WHATSAPP',
-    ai_generated_pitch: `Hello ${currentLead.ownerName || 'Manager'}, reaching out regarding ${currentLead.category} collaboration in Karur...`,
+    selected_channel: waInfo.exists ? 'WHATSAPP' : 'EMAIL',
+    ai_generated_pitch: `Hi ${currentLead.ownerName ? currentLead.ownerName.split(' ')[0] : 'Sir'}! 👋 We build simple websites, mobile apps & lead systems for ${currentLead.category} stores in ${currentLead.address.split(',')[0]}. Are you planning any new project for ${currentLead.name}?`,
     human_approval_status: idx >= 5 ? 'APPROVED' : 'PENDING_APPROVAL',
+    dispatch_delay: '1 to 2 minutes between members',
+    chatbot_typing_delay: '15 to 20 seconds',
     reply_intent: idx >= 7 ? 'INTERESTED' : 'AWAITING_REPLY',
-    requirements: idx >= 8 ? { quantity: '500 units', budget: '₹50,000', timeline: '2 weeks' } : {},
+    extracted_project_dossier: idx >= 8 ? {
+      projectId: 'proj-4921',
+      clientName: currentLead.name,
+      projectType: 'Business Website & Mobile App',
+      projectSummary: `Custom Website & App for ${currentLead.name}`,
+      status: 'Qualified Project Idea'
+    } : null,
     crm_stage: idx >= 8 ? 'Hot Prospect' : 'New Lead'
   };
 
@@ -703,6 +739,7 @@ function renderDetailPanel(shop) {
   const container = document.getElementById('detailPanelContent');
   const isSaved = getSavedLeads().some(l => l.id === shop.id);
   const savedItem = getSavedLeads().find(l => l.id === shop.id);
+  const waInfo = appState.waVerifiedMap.get(shop.id);
 
   container.innerHTML = `
     <div class="detail-hero-cover">
@@ -725,7 +762,7 @@ function renderDetailPanel(shop) {
           <span class="icon">📞</span>
           <span>Call ${escapeHtml(shop.ownerName ? shop.ownerName.split(' ')[0] : 'Owner')}</span>
         </a>
-        <a href="https://wa.me/${shop.whatsapp}?text=Hello%20${encodeURIComponent(shop.ownerName || shop.name)},%20we%20are%20reaching%20out%20regarding%20${encodeURIComponent(shop.category)}%20business%20collaboration." target="_blank" class="quick-action-btn">
+        <a href="https://wa.me/${shop.whatsapp}?text=Hello%20${encodeURIComponent(shop.ownerName || shop.name)},%20reaching%20out%20regarding%20${encodeURIComponent(shop.category)}%20collaboration." target="_blank" class="quick-action-btn">
           <span class="icon">💬</span>
           <span>WhatsApp Pitch</span>
         </a>
@@ -748,7 +785,10 @@ function renderDetailPanel(shop) {
           </div>
           <div class="info-item">
             <span class="icon">📱</span>
-            <div><strong>Direct Mobile / WhatsApp:</strong> <a href="tel:${shop.mobile}">${escapeHtml(shop.mobile || shop.phone)}</a></div>
+            <div>
+              <strong>Direct Mobile / WhatsApp:</strong> <a href="tel:${shop.mobile}">${escapeHtml(shop.mobile || shop.phone)}</a>
+              ${waInfo ? (waInfo.exists ? `<span class="wa-badge active"> 🟢 WA Active</span>` : `<span class="wa-badge inactive"> 🔴 Landline</span>`) : ''}
+            </div>
           </div>
           <div class="info-item">
             <span class="icon">☎️</span>
@@ -833,45 +873,51 @@ function renderPipelineView() {
           <th>Category</th>
           <th>Contact Person</th>
           <th>Mobile / WhatsApp</th>
-          <th>Email</th>
-          <th>Lead Score</th>
+          <th>WhatsApp Verification</th>
+          <th>Official Email</th>
           <th>Pipeline Status</th>
           <th>Sales Notes</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        ${savedLeads.map(lead => `
-          <tr data-shop-id="${lead.id}">
-            <td>
-              <strong style="color: var(--color-primary);">${escapeHtml(lead.name)}</strong>
-              <div style="font-size: 0.75rem; color: var(--color-text-muted);">${escapeHtml(lead.address.split(',')[0])}</div>
-            </td>
-            <td><span class="spec-tag">${escapeHtml(lead.category)}</span></td>
-            <td><strong>${escapeHtml(lead.ownerName || 'Contact')}</strong></td>
-            <td>
-              <a href="https://wa.me/${lead.whatsapp}" target="_blank" style="color: #059669; font-weight: 600; text-decoration: none;">
-                💬 ${escapeHtml(lead.mobile || lead.phone)}
-              </a>
-            </td>
-            <td><a href="mailto:${lead.email}">${escapeHtml(lead.email)}</a></td>
-            <td><span class="lead-score-badge ${lead.leadBadgeClass || 'badge-high'}">${escapeHtml(lead.leadScore || '⚡ High')}</span></td>
-            <td>
-              <span class="status-pill stage-${(lead.leadStatus || 'New').toLowerCase().replace(/\s+/g, '-')}">
-                ${escapeHtml(lead.leadStatus || 'New Lead')}
-              </span>
-            </td>
-            <td style="font-size: 0.8rem; color: var(--color-text-muted); max-width: 200px;">
-              ${escapeHtml(lead.salesNotes || 'No notes added')}
-            </td>
-            <td>
-              <div style="display: flex; gap: 0.35rem;">
-                <button class="btn-card-action primary" onclick="window.selectShopById('${lead.id}')">Inspect</button>
-                <button class="btn-card-action" onclick="window.toggleSaveLead('${lead.id}')">Delete</button>
-              </div>
-            </td>
-          </tr>
-        `).join('')}
+        ${savedLeads.map(lead => {
+          const waInfo = appState.waVerifiedMap.get(lead.id);
+
+          return `
+            <tr data-shop-id="${lead.id}">
+              <td>
+                <strong style="color: var(--color-primary);">${escapeHtml(lead.name)}</strong>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">${escapeHtml(lead.address.split(',')[0])}</div>
+              </td>
+              <td><span class="spec-tag">${escapeHtml(lead.category)}</span></td>
+              <td><strong>${escapeHtml(lead.ownerName || 'Contact')}</strong></td>
+              <td>
+                <a href="https://wa.me/${lead.whatsapp}" target="_blank" style="color: #059669; font-weight: 600; text-decoration: none;">
+                  💬 ${escapeHtml(lead.mobile || lead.phone)}
+                </a>
+              </td>
+              <td>
+                ${waInfo ? (waInfo.exists ? `<span class="wa-badge active">🟢 Active WhatsApp</span>` : `<span class="wa-badge inactive">🔴 Landline</span>`) : `<span style="font-size: 0.72rem; color: #94a3b8;">⏳ Checking...</span>`}
+              </td>
+              <td><a href="mailto:${lead.email}">${escapeHtml(lead.email)}</a></td>
+              <td>
+                <span class="status-pill stage-${(lead.leadStatus || 'New').toLowerCase().replace(/\s+/g, '-')}">
+                  ${escapeHtml(lead.leadStatus || 'New Lead')}
+                </span>
+              </td>
+              <td style="font-size: 0.8rem; color: var(--color-text-muted); max-width: 200px;">
+                ${escapeHtml(lead.salesNotes || 'No notes added')}
+              </td>
+              <td>
+                <div style="display: flex; gap: 0.35rem;">
+                  <button class="btn-card-action primary" onclick="window.selectShopById('${lead.id}')">Inspect</button>
+                  <button class="btn-card-action" onclick="window.toggleSaveLead('${lead.id}')">Delete</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('')}
       </tbody>
     </table>
   `;
@@ -902,6 +948,27 @@ function setupEventListeners() {
     clearBtn.addEventListener('click', () => {
       if (searchInput) searchInput.value = '';
       clearBtn.style.display = 'none';
+    });
+  }
+
+  // Verify WhatsApp Button
+  const verifyWABtn = document.getElementById('verifyWhatsAppBtn');
+  if (verifyWABtn) {
+    verifyWABtn.addEventListener('click', async () => {
+      showToast('Running Baileys WhatsApp check on all shop leads...');
+      await verifyWhatsAppNumbersForShops();
+      showToast('WhatsApp Status Check Completed!');
+    });
+  }
+
+  // WhatsApp Active Only Filter Chip
+  const waChip = document.getElementById('waOnlyFilterChip');
+  if (waChip) {
+    waChip.addEventListener('click', () => {
+      appState.waOnlyFilter = !appState.waOnlyFilter;
+      waChip.classList.toggle('active', appState.waOnlyFilter);
+      renderShopsList();
+      renderSpreadsheetView();
     });
   }
 
@@ -945,6 +1012,7 @@ function setupEventListeners() {
         hideModal();
         googleRawTextInput.value = '';
         showToast(`Successfully extracted ${extracted.length} B2B shop leads from Google Search!`);
+        verifyWhatsAppNumbersForShops();
       } else {
         showToast('No structured shop phone numbers found in text.');
       }

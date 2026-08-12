@@ -549,6 +549,20 @@ body {
 
 .star-icon { color: #f59e0b; }
 
+.wa-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.wa-badge.active { background: #dcfce7; color: #166534; }
+.wa-badge.inactive { background: #f1f5f9; color: #64748b; }
+
 .card-address {
   font-size: 0.72rem;
   color: var(--color-text-muted);
